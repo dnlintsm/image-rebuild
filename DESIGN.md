@@ -8,6 +8,16 @@ Docker Hub.
 **Hard requirement (company policy):** the pushed image must have **zero
 CRITICAL vulnerabilities**. The tool refuses to push otherwise.
 
+### Resolved decisions
+1. **Unfixable CRITICALs** — **no allowlist**. Company policy does not permit
+   exceptions; when a CRITICAL has no upstream fix, the run **blocks** (does not
+   push) and reports the blockers as "awaiting upstream fix." Re-run when a fix
+   ships.
+2. **Distroless / `scratch`** — detect and **fail clearly** (no package manager
+   to remediate through).
+3. **Base-image bump** — **recommendation-only**, never auto-applied.
+4. **Docker Hub tag** — **overwrite the original tag** with the rebuilt image.
+
 ---
 
 ## 1. Goals & non-goals
@@ -156,8 +166,9 @@ Filter to the configured gate severity (default `critical`), then map each to a
    - Fallback when the pinned version isn't in the repo: full `apt-get upgrade`.
 3. **Language dependency upgrade** — pip / npm / go / gem to the named fix
    version.
-4. **Unfixable** (`fixed is None`) → cannot patch by upgrade. Routed to the
-   allowlist/exception path (§6), never silently dropped.
+4. **Unfixable** (`fixed is None`) → cannot patch by upgrade. Recorded as a
+   **blocker**; the run will not push and reports it as "awaiting upstream fix"
+   (§6).
 
 Detecting the OS family / package manager: inspect the image (`docker run --rm
 <img> cat /etc/os-release`, probe for `apt`/`apk`/`dnf`). Cached per run.
@@ -198,14 +209,14 @@ Dockerfile). Capture build logs to the run artifacts directory.
 - Re-scan the freshly built image with the same scanner.
 - Pass condition: `distribution["critical"] == 0` (or `<= threshold`).
 - Loop control: if still > 0 but the count **decreased**, loop again (new CVEs
-  can surface after upgrades). If no progress or only unfixable CVEs remain,
-  stop and FAIL with a report.
+  can surface after upgrades). If no progress, or only **unfixable** CVEs remain,
+  stop and FAIL with a report listing them as "awaiting upstream fix."
 - `max_iterations` (default 3) prevents infinite loops.
 
 ### 4.7 `publisher.py`
 Only invoked after a clean verify.
-- Tag: deterministic, non-clobbering — `<repo>:<orig-tag>-cvefix-<YYYYMMDD>`
-  (and optionally also move a `<orig-tag>-secure` tag).
+- Tag: **overwrites the original `<repo>:<tag>`** with the rebuilt image (per
+  decision 4). The pre-fix digest is recorded in the run report for rollback.
 - `docker login` via `DOCKERHUB_USER` / `DOCKERHUB_TOKEN` (env).
 - `docker push`. Print the pushed digest.
 
@@ -220,11 +231,7 @@ gate_severity: critical        # critical | high | ...
 max_iterations: 3
 base_image_bump: false         # opt-in auto rebase
 registry:
-  dockerhub_repo: mycorp/myapp
-ignore:                        # allowlisted CVEs (see §6)
-  - cve: CVE-2024-ZZZZ
-    reason: "No upstream fix; not reachable in our usage"
-    expires: 2026-09-01
+  dockerhub_repo: mycorp/myapp # original tag is overwritten on push
 artifacts_dir: ./runs          # scans + Dockerfiles per run
 ```
 
@@ -237,11 +244,10 @@ Secrets (env only, never in file/repo):
 ## 6. The hard cases (decide policy before coding)
 
 1. **Unfixable CRITICALs (no upstream fix).** Cannot reach zero by upgrading.
-   Options: (a) base-image swap that removes the package, (b) documented
-   **allowlist with reason + expiry**. The allowlist is the escape hatch that
-   keeps the loop terminating; without it, the run fails loudly with the list of
-   blockers. *Recommended: support the allowlist, require a reason + expiry,
-   and report any expired entries as failures.*
+   Per decision 1, there is **no allowlist** — the run fails loudly with the
+   list of blockers, reported as "awaiting upstream fix." Re-run once a fix
+   ships. (A base-image swap that drops the package remains a manual option,
+   surfaced as a recommendation.)
 2. **Distroless / `scratch` images** — no shell or package manager. OS/lang
    upgrade steps don't apply; only base-image rebase works. Detect and fail
    with a clear message in v1.
@@ -300,10 +306,9 @@ Exit codes: `0` clean & pushed · `1` unfixable CRITICALs remain ·
 ## 10. Open questions
 
 1. Exact `twistcli` JSON schema — need one real `--output-file` sample to lock
-   the parser field names.
-2. Is base-image bump in-scope for v1 auto-remediation, or recommendation-only?
-3. Is the allowlist/exception mechanism acceptable under company policy, or must
-   every CRITICAL be truly fixed (changes whether the loop can ever pass on
-   unfixable CVEs)?
-4. Docker Hub tagging convention — overwrite the original tag, or publish a
-   separate `-secure`/`-cvefix` tag?
+   the parser field names. The parser is written defensively against the
+   documented format; a real sample will confirm it.
+
+Resolved: base-image bump is recommendation-only (decision 3); no allowlist for
+unfixable CVEs (decision 1); push overwrites the original tag (decision 4);
+distroless images fail clearly (decision 2).

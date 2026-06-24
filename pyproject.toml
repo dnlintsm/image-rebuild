@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "image-rebuild"
+version = "0.1.0"
+description = "Local CLI that scans Docker images with Prisma Cloud and rebuilds them to zero critical CVEs."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+image-rebuild = "image_rebuild.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["image_rebuild*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
