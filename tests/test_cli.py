@@ -18,9 +18,18 @@ def test_scan_fail_on_gate():
     assert main(["scan", "--report", FIXTURE, "--fail-on-gate"]) == 1
 
 
-def test_fix_requires_dry_run():
-    # Without --dry-run the build/verify loop isn't implemented yet.
+def test_fix_report_without_dry_run_is_rejected():
+    # The live build+verify loop needs a real image, not an offline report.
     assert main(["fix", "--report", FIXTURE]) == 3
+
+
+def test_fix_loop_requires_image():
+    assert main(["fix"]) == 3
+
+
+def test_fix_push_not_yet_implemented():
+    # --push (publishing) lands in M4.
+    assert main(["fix", "img:tag", "--push"]) == 3
 
 
 def test_fix_dry_run_generates_dockerfile(tmp_path, capsys):
