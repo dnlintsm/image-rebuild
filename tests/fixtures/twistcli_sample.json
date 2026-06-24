@@ -1,0 +1,59 @@
+{
+  "results": [
+    {
+      "id": "sha256:abc123",
+      "name": "example/app:1.0",
+      "distro": "Debian GNU/Linux 11 (bullseye)",
+      "distroRelease": "bullseye",
+      "vulnerabilityDistribution": {
+        "critical": 2,
+        "high": 1,
+        "medium": 1,
+        "low": 0,
+        "total": 4
+      },
+      "vulnerabilities": [
+        {
+          "id": "CVE-2024-0001",
+          "severity": "critical",
+          "packageName": "openssl",
+          "packageVersion": "1.1.1k-1",
+          "status": "fixed in 1.1.1n-0+deb11u1",
+          "packageType": "os",
+          "cvss": 9.8,
+          "link": "https://nvd.nist.gov/vuln/detail/CVE-2024-0001"
+        },
+        {
+          "id": "CVE-2024-0002",
+          "severity": "critical",
+          "packageName": "log4j-core",
+          "packageVersion": "2.14.1",
+          "status": "fixed in 2.17.1",
+          "packageType": "java",
+          "cvss": 10.0,
+          "link": "https://nvd.nist.gov/vuln/detail/CVE-2024-0002"
+        },
+        {
+          "id": "CVE-2024-0003",
+          "severity": "high",
+          "packageName": "zlib1g",
+          "packageVersion": "1:1.2.11.dfsg-2",
+          "status": "open",
+          "packageType": "os",
+          "cvss": 7.5,
+          "link": "https://nvd.nist.gov/vuln/detail/CVE-2024-0003"
+        },
+        {
+          "id": "CVE-2024-0004",
+          "severity": "medium",
+          "packageName": "requests",
+          "packageVersion": "2.25.1",
+          "status": "fixed in 2.32.0",
+          "packageType": "python",
+          "cvss": 5.3,
+          "link": "https://nvd.nist.gov/vuln/detail/CVE-2024-0004"
+        }
+      ]
+    }
+  ]
+}
