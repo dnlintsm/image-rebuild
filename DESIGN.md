@@ -108,9 +108,14 @@ twistcli images scan \
   config drift can't silently weaken our zero-critical rule.
 - Console URL + credentials come from env (`PRISMA_*`), never committed.
 
-> **Open item:** confirm the exact twistcli JSON schema against a real sample
-> from your Console (field names below are from the documented format and the
-> parser is written defensively around them).
+> **Confirmed** against the Prisma Cloud Compute docs and a realistic sample
+> (`tests/fixtures/twistcli_real_sample.json`): result fields are
+> `id/name/distro/distroRelease/digest/collections/vulnerabilities[]`; each
+> vulnerability carries `id/status/cvss/vector/description/severity/packageName/
+> packageVersion/link/riskFactors/tags`, plus `packageType` and the
+> `vulnerabilityDistribution` counts emitted by the real binary (beyond the
+> simplified docs schema). The parser reads `packageType` for the ecosystem and
+> tolerates `vulnerabilityDistribution` being absent.
 
 ### 4.2 `parser.py` — normalize the report
 
@@ -305,9 +310,9 @@ Exit codes: `0` clean & pushed · `1` unfixable CRITICALs remain ·
 
 ## 10. Open questions
 
-1. Exact `twistcli` JSON schema — need one real `--output-file` sample to lock
-   the parser field names. The parser is written defensively against the
-   documented format; a real sample will confirm it.
+(None blocking.) The `twistcli` JSON schema is confirmed against the Prisma
+Cloud Compute docs and a realistic fixture (§4.1); swapping in a report from your
+own Console remains a good final sanity check before relying on M3 output.
 
 Resolved: base-image bump is recommendation-only (decision 3); no allowlist for
 unfixable CVEs (decision 1); push overwrites the original tag (decision 4);
