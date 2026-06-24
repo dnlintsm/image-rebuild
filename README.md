@@ -11,15 +11,19 @@ architecture and decisions.
 
 ## Status
 
-Milestone **M1 — scan + parse** (current):
+Milestones **M1 — scan + parse** and **M2 — plan + generate (dry-run)** (current):
 
-- Invoke `twistcli` and normalize its JSON report.
-- Or parse an existing report offline with `--report`.
-- Print a severity-gated vulnerability summary, flagging unfixable CRITICALs
-  (which block the eventual push until an upstream fix ships).
+- Invoke `twistcli` and normalize its JSON report (or parse one offline with `--report`).
+- Print a severity-gated vulnerability summary, flagging unfixable CRITICALs.
+- Build a remediation plan: map each fixable, gate-severity CVE to an OS
+  (apt/apk/dnf) or Python (pip) upgrade, dedup per package to the highest
+  required fix version, and surface anything needing an app rebuild (`[MANUAL]`)
+  or awaiting an upstream fix (`[BLOCKED]`).
+- Generate a `FROM`-based remediation Dockerfile (`fix --dry-run`), without
+  building or pushing.
 
-Remediation (planner/generator), the build/verify loop, and publishing land in
-later milestones (M2–M5 in `DESIGN.md`).
+The build/verify loop and publishing land in later milestones (M3–M5 in
+`DESIGN.md`).
 
 ## Install
 
@@ -40,6 +44,9 @@ image-rebuild scan --report report.json
 
 # Highlight/fail on a different gate severity, and fail CI on findings
 image-rebuild scan example/app:1.0 --gate-severity high --fail-on-gate
+
+# Plan fixes and generate a remediation Dockerfile (no build/push yet)
+image-rebuild fix --report report.json --dry-run -o Dockerfile
 ```
 
 ### Credentials (environment only — never committed)

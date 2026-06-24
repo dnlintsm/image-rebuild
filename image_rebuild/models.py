@@ -73,3 +73,50 @@ class ScanResult:
     def blockers(self, severity: str = "critical") -> list[Vulnerability]:
         """Gate-severity vulnerabilities with no available fix (awaiting upstream)."""
         return [v for v in self.at_or_above(severity) if not v.fixable]
+
+
+@dataclass
+class PackageFix:
+    """Upgrade one package to `fixed`, clearing the listed CVEs."""
+
+    package: str
+    fixed: str
+    cves: list[str]
+
+
+@dataclass
+class RemediationChannel:
+    """A group of package upgrades applied through one package manager."""
+
+    manager: str             # apt | apk | dnf | pip | ...
+    ecosystem: str           # os | python | ...
+    fixes: list[PackageFix]
+
+
+@dataclass
+class RemediationPlan:
+    """Everything needed to generate a remediation Dockerfile for one image."""
+
+    image: str
+    base_image: str                              # FROM target
+    os_manager: str | None                       # detected OS package manager
+    channels: list[RemediationChannel] = field(default_factory=list)
+    blockers: list[Vulnerability] = field(default_factory=list)       # unfixable at gate
+    unsupported: list[Vulnerability] = field(default_factory=list)    # fixable, no channel
+    recommendations: list[str] = field(default_factory=list)
+
+    @property
+    def actionable(self) -> bool:
+        return bool(self.channels)
+
+    @property
+    def has_blockers(self) -> bool:
+        return bool(self.blockers)
+
+    @property
+    def fixed_cves(self) -> list[str]:
+        out: list[str] = []
+        for channel in self.channels:
+            for fix in channel.fixes:
+                out.extend(fix.cves)
+        return sorted(set(out))
