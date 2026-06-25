@@ -11,7 +11,8 @@ architecture and decisions.
 
 ## Status
 
-Milestones **M1 — scan + parse** and **M2 — plan + generate (dry-run)** (current):
+Milestones **M1 — scan + parse**, **M2 — plan + generate (dry-run)**, and
+**M3 — build + verify loop** (current):
 
 - Invoke `twistcli` and normalize its JSON report (or parse one offline with `--report`).
 - Print a severity-gated vulnerability summary, flagging unfixable CRITICALs.
@@ -19,11 +20,13 @@ Milestones **M1 — scan + parse** and **M2 — plan + generate (dry-run)** (cur
   (apt/apk/dnf) or Python (pip) upgrade, dedup per package to the highest
   required fix version, and surface anything needing an app rebuild (`[MANUAL]`)
   or awaiting an upstream fix (`[BLOCKED]`).
-- Generate a `FROM`-based remediation Dockerfile (`fix --dry-run`), without
-  building or pushing.
+- Generate a `FROM`-based remediation Dockerfile (`fix --dry-run`).
+- **Run the loop** (`fix <image>`): pull → scan → fix → rebuild → re-scan,
+  iterating until the zero-critical gate passes, the count stalls, or only
+  unfixable/manual CVEs remain.
 
-The build/verify loop and publishing land in later milestones (M3–M5 in
-`DESIGN.md`).
+Publishing (overwrite the original tag on a clean verify) lands in M4; hardening
+in M5 (see `DESIGN.md`).
 
 ## Install
 
@@ -45,8 +48,11 @@ image-rebuild scan --report report.json
 # Highlight/fail on a different gate severity, and fail CI on findings
 image-rebuild scan example/app:1.0 --gate-severity high --fail-on-gate
 
-# Plan fixes and generate a remediation Dockerfile (no build/push yet)
+# Plan fixes and generate a remediation Dockerfile (no build/push)
 image-rebuild fix --report report.json --dry-run -o Dockerfile
+
+# Run the build + verify loop against a live image (needs docker + twistcli)
+image-rebuild fix example/app:1.0 --max-iterations 3
 ```
 
 ### Credentials (environment only — never committed)

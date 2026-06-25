@@ -1,17 +1,20 @@
 """Command-line entrypoint.
 
-M1 ships the `scan` subcommand: scan an image with Prisma (or parse an existing
-twistcli report) and print a normalized vulnerability summary.
+  scan       — scan an image (or parse a twistcli report) and print findings.
+  fix        — plan + generate (--dry-run), or run the build+verify loop.
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 
+from .builder import BuildError, DockerBuilder
 from .config import ConfigError, PrismaConfig
 from .generator import generate_dockerfile
 from .models import RemediationPlan, ScanResult, severity_rank
+from .orchestrator import Orchestrator, RunOutcome
 from .parser import parse_report_file
 from .planner import build_plan
 from .scanner import PrismaScanner, ScannerError
@@ -126,14 +129,25 @@ def _print_plan(plan: RemediationPlan) -> None:
         print(f"\n* {rec}")
 
 
+def _print_outcome(outcome: RunOutcome) -> None:
+    print(f"\nResult: {outcome.status.upper()} — {outcome.message}")
+    print(f"Image:  {outcome.image}")
+    print(f"Iterations: {outcome.iterations}")
+    print(f"Remaining {outcome.final_result.critical_count} critical "
+          f"(total {len(outcome.final_result.vulnerabilities)})")
+    if outcome.blockers:
+        print(f"\n[BLOCKED] {len(outcome.blockers)} CVE(s) awaiting an upstream fix:")
+        for v in outcome.blockers:
+            print(f"  - {v.cve}  {v.package} {v.installed}")
+    if outcome.unsupported:
+        print(f"\n[MANUAL] {len(outcome.unsupported)} CVE(s) need an app rebuild:")
+        for v in outcome.unsupported:
+            print(f"  - {v.cve}  {v.package} {v.installed} -> {v.fixed}  [{v.ecosystem}]")
+
+
 def _cmd_fix(args: argparse.Namespace) -> int:
     if not args.dry_run:
-        print(
-            "error: only --dry-run is implemented (M2). The build/verify/push loop "
-            "lands in M3–M4.",
-            file=sys.stderr,
-        )
-        return EXIT_CONFIG
+        return _run_fix_loop(args)
 
     try:
         result = _load_result(args)
@@ -177,6 +191,46 @@ def _cmd_fix(args: argparse.Namespace) -> int:
     return EXIT_CRITICALS if gate_unclearable else EXIT_OK
 
 
+def _run_fix_loop(args: argparse.Namespace) -> int:
+    """Live build + verify loop (M3): pull, scan, fix, rebuild, re-scan."""
+    if args.report:
+        print("error: --report is for offline planning; the build+verify loop needs "
+              "a live image. Use --dry-run with --report, or pass an IMAGE.",
+              file=sys.stderr)
+        return EXIT_CONFIG
+    if not args.image:
+        print("error: provide an IMAGE to fix (or use --dry-run --report FILE).",
+              file=sys.stderr)
+        return EXIT_CONFIG
+    if args.push:
+        print("error: --push (publishing) lands in M4 and is not implemented yet.",
+              file=sys.stderr)
+        return EXIT_CONFIG
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    try:
+        orchestrator = Orchestrator(
+            scanner=PrismaScanner(PrismaConfig.from_env()),
+            builder=DockerBuilder(),
+            gate_severity=args.gate_severity,
+            max_iterations=args.max_iterations,
+            package_manager=args.package_manager,
+        )
+        outcome = orchestrator.run(args.image)
+    except ConfigError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+    except ScannerError as exc:
+        print(f"scanner error: {exc}", file=sys.stderr)
+        return EXIT_SCANNER
+    except BuildError as exc:
+        print(f"build error: {exc}", file=sys.stderr)
+        return EXIT_SCANNER
+
+    _print_outcome(outcome)
+    return EXIT_OK if outcome.passed else EXIT_CRITICALS
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="image-rebuild",
@@ -199,13 +253,17 @@ def build_parser() -> argparse.ArgumentParser:
     fix.add_argument("--report", help="Parse an existing twistcli JSON report instead of scanning.")
     fix.add_argument("--save-report", help="Path to also save the raw twistcli JSON report.")
     fix.add_argument("--dry-run", action="store_true",
-                     help="Generate the remediation Dockerfile without building or pushing (M2).")
-    fix.add_argument("--output", "-o", help="Write the generated Dockerfile to this path.")
+                     help="Generate the remediation Dockerfile without building or pushing.")
+    fix.add_argument("--output", "-o", help="Write the generated Dockerfile to this path (dry-run).")
     fix.add_argument("--gate-severity", default="critical",
                      help="Severity gate to remediate (default: critical).")
     fix.add_argument("--package-manager", choices=["apt", "apk", "dnf"],
                      help="Override OS package-manager detection.")
     fix.add_argument("--base-image", help="Override the FROM target (e.g. pin to a digest).")
+    fix.add_argument("--max-iterations", type=int, default=3,
+                     help="Max rebuild/re-scan iterations in the build loop (default: 3).")
+    fix.add_argument("--push", action="store_true",
+                     help="Push the cleared image to the registry (M4; not yet implemented).")
     fix.set_defaults(func=_cmd_fix)
     return parser
 
