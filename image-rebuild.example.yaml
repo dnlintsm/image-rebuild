@@ -1,0 +1,16 @@
+# Example image-rebuild config. Copy to image-rebuild.yaml (auto-detected) or
+# pass with `--config`. CLI flags override these values.
+#
+# Secrets are NEVER read from here — set them in the environment:
+#   PRISMA_CONSOLE_URL, PRISMA_USER, PRISMA_PASSWORD   (scanning)
+#   DOCKERHUB_USER, DOCKERHUB_TOKEN                    (--push)
+
+gate_severity: critical      # severity gate to remediate/enforce
+max_iterations: 3            # max rebuild/re-scan iterations before giving up
+package_manager:             # force apt|apk|dnf instead of auto-detecting (optional)
+base_image_bump: false       # recommendation-only; never auto-applied
+
+registry:
+  dockerhub_repo: mycorp/app # the original tag is overwritten on push
+
+artifacts_dir: ./runs        # where scan reports / generated Dockerfiles are kept

@@ -26,15 +26,20 @@ class RunResult:
 
 
 class CommandRunner(Protocol):
-    def run(self, cmd: list[str], cwd: str | None = None) -> RunResult: ...
+    def run(self, cmd: list[str], cwd: str | None = None,
+            input_text: str | None = None) -> RunResult: ...
 
 
 class SubprocessRunner:
     """Default runner: executes the command with subprocess."""
 
-    def run(self, cmd: list[str], cwd: str | None = None) -> RunResult:
+    def run(self, cmd: list[str], cwd: str | None = None,
+            input_text: str | None = None) -> RunResult:
         try:
-            proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+            proc = subprocess.run(
+                cmd, cwd=cwd, input=input_text,
+                capture_output=True, text=True, check=False,
+            )
         except OSError as exc:  # pragma: no cover - environment dependent
             raise BuildError(f"failed to execute {' '.join(cmd[:2])}: {exc}") from exc
         return RunResult(proc.returncode, proc.stdout, proc.stderr)
@@ -44,6 +49,7 @@ class ImageBuilder(Protocol):
     def pull(self, image: str) -> None: ...
     def build(self, dockerfile_text: str, tag: str) -> str: ...
     def inspect_user(self, image: str) -> str | None: ...
+    def digest(self, image: str) -> str | None: ...
 
 
 class DockerBuilder:
@@ -80,3 +86,18 @@ class DockerBuilder:
             return None
         user = result.stdout.strip()
         return user or None
+
+    def digest(self, image: str) -> str | None:
+        """Return the image's content digest (RepoDigest, else image Id).
+
+        Captured before remediation so the original can be restored if a rebuild
+        goes wrong (the original tag is overwritten on push).
+        """
+        result = self.runner.run([
+            self.binary, "inspect", "--format",
+            "{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}",
+            image,
+        ])
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
