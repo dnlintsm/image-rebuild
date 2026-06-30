@@ -10,6 +10,8 @@ import argparse
 import logging
 import sys
 
+from . import __version__
+from .artifacts import RunArtifacts
 from .builder import BuildError, DockerBuilder
 from .config import AppConfig, ConfigError, PrismaConfig
 from .generator import generate_dockerfile
@@ -144,6 +146,8 @@ def _print_outcome(outcome: RunOutcome) -> None:
         print(f"\n[MANUAL] {len(outcome.unsupported)} CVE(s) need an app rebuild:")
         for v in outcome.unsupported:
             print(f"  - {v.cve}  {v.package} {v.installed} -> {v.fixed}  [{v.ecosystem}]")
+    if outcome.artifacts_dir:
+        print(f"\nArtifacts: {outcome.artifacts_dir}")
 
 
 def _resolve_fix_config(args: argparse.Namespace) -> str | None:
@@ -158,6 +162,8 @@ def _resolve_fix_config(args: argparse.Namespace) -> str | None:
         args.package_manager = cfg.package_manager
     if args.max_iterations is None:
         args.max_iterations = cfg.max_iterations
+    if args.artifacts_dir is None:
+        args.artifacts_dir = cfg.artifacts_dir
     if severity_rank(args.gate_severity) == 0 and args.gate_severity.lower() != "unknown":
         return f"unknown gate severity: {args.gate_severity}"
     return None
@@ -226,13 +232,18 @@ def _run_fix_loop(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return EXIT_CONFIG
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.WARNING if args.quiet else logging.INFO,
+        format="%(levelname)s %(message)s",
+    )
     try:
         publisher = DockerPublisher(DockerHubConfig.from_env()) if args.push else None
     except PublishError as exc:
         # Missing/invalid credentials is a configuration problem.
         print(f"config error: {exc}", file=sys.stderr)
         return EXIT_CONFIG
+
+    artifacts = None if args.no_artifacts else RunArtifacts(args.artifacts_dir, args.image)
 
     try:
         orchestrator = Orchestrator(
@@ -243,6 +254,7 @@ def _run_fix_loop(args: argparse.Namespace) -> int:
             package_manager=args.package_manager,
             publisher=publisher,
             push=args.push,
+            artifacts=artifacts,
         )
         outcome = orchestrator.run(args.image)
     except ConfigError as exc:
@@ -265,6 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="image-rebuild",
         description="Scan Docker images with Prisma Cloud and rebuild to zero critical CVEs.",
     )
+    parser.add_argument("--version", action="version", version=f"image-rebuild {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     scan = sub.add_parser("scan", help="Scan an image (or parse an existing report) and print findings.")
@@ -292,6 +305,12 @@ def build_parser() -> argparse.ArgumentParser:
     fix.add_argument("--max-iterations", type=int, default=None,
                      help="Max rebuild/re-scan iterations in the build loop (default: 3 / config).")
     fix.add_argument("--config", help="Path to an image-rebuild.yaml config file.")
+    fix.add_argument("--artifacts-dir", default=None,
+                     help="Directory for per-run scan reports/Dockerfiles (default: ./runs / config).")
+    fix.add_argument("--no-artifacts", action="store_true",
+                     help="Do not write any run artifacts to disk.")
+    fix.add_argument("--quiet", "-q", action="store_true",
+                     help="Only log warnings and errors.")
     fix.add_argument("--push", action="store_true",
                      help="Push the cleared image to Docker Hub (overwrites the original tag).")
     fix.set_defaults(func=_cmd_fix)

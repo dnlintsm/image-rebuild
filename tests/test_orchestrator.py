@@ -64,6 +64,20 @@ class FakePublisher:
         return "sha256:rebuilt"
 
 
+def test_artifacts_are_written_for_a_run(tmp_path):
+    from image_rebuild.artifacts import RunArtifacts
+    scanner = FakeScanner([_result([_crit("CVE-1")]), _result([])])
+    artifacts = RunArtifacts(str(tmp_path), "img:tag")
+    outcome = Orchestrator(scanner, FakeBuilder(), artifacts=artifacts).run("img:tag")
+    assert outcome.status == CLEAN
+    assert outcome.artifacts_dir == str(artifacts.dir)
+    # initial scan + iteration-1 scan + the generated Dockerfile + summary
+    assert (artifacts.dir / "scan_initial.json").exists()
+    assert (artifacts.dir / "scan_1.json").exists()
+    assert (artifacts.dir / "Dockerfile.1").exists()
+    assert (artifacts.dir / "run.json").exists()
+
+
 def test_already_clean_does_not_build():
     scanner = FakeScanner([_result([])])
     builder = FakeBuilder()

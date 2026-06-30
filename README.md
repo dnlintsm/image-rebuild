@@ -11,8 +11,9 @@ architecture and decisions.
 
 ## Status
 
-Milestones **M1 — scan + parse**, **M2 — plan + generate (dry-run)**,
-**M3 — build + verify loop**, and **M4 — publish + config** (current):
+Feature-complete (M1–M5). Milestones **M1 — scan + parse**,
+**M2 — plan + generate (dry-run)**, **M3 — build + verify loop**,
+**M4 — publish + config**, and **M5 — hardening**:
 
 - Invoke `twistcli` and normalize its JSON report (or parse one offline with `--report`).
 - Print a severity-gated vulnerability summary, flagging unfixable CRITICALs.
@@ -30,8 +31,10 @@ Milestones **M1 — scan + parse**, **M2 — plan + generate (dry-run)**,
 - **Config file** (`image-rebuild.yaml` / `--config`): gate severity, max
   iterations, package-manager override, etc. CLI flags override it; secrets stay
   in the environment. See [`image-rebuild.example.yaml`](image-rebuild.example.yaml).
-
-Hardening (artifacts dir, richer logging) remains for M5 (see `DESIGN.md`).
+- **Run artifacts** (`./runs/<timestamp>_<image>/`): every run persists its scan
+  reports (`scan_*.json`), generated Dockerfiles (`Dockerfile.N`), and a
+  `run.json` summary for auditing. Disable with `--no-artifacts`; quiet logs with
+  `-q`.
 
 ## Install
 

@@ -10,6 +10,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 dependencies = ["pyyaml>=6"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+    "Topic :: Software Development :: Build Tools",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
@@ -20,6 +26,9 @@ image-rebuild = "image_rebuild.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["image_rebuild*"]
+
+[tool.setuptools.package-data]
+image_rebuild = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

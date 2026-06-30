@@ -6,6 +6,14 @@ from image_rebuild.cli import main
 FIXTURE = str(Path(__file__).parent / "fixtures" / "twistcli_sample.json")
 
 
+def test_version_flag(capsys):
+    import pytest
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    assert "image-rebuild" in capsys.readouterr().out
+
+
 def test_scan_from_report(capsys):
     rc = main(["scan", "--report", FIXTURE])
     out = capsys.readouterr().out
