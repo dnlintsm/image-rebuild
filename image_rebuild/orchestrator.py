@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from .artifacts import ArtifactSink, NullArtifacts
 from .builder import ImageBuilder
 from .generator import generate_dockerfile
 from .models import ScanResult, Vulnerability
@@ -54,6 +55,7 @@ class RunOutcome:
     original_digest: str | None = None   # pre-fix image digest, for rollback
     pushed: bool = False
     pushed_digest: str | None = None
+    artifacts_dir: str | None = None
 
     @property
     def passed(self) -> bool:
@@ -70,6 +72,7 @@ class Orchestrator:
         package_manager: str | None = None,
         publisher: ImagePublisher | None = None,
         push: bool = False,
+        artifacts: ArtifactSink | None = None,
     ):
         self.scanner = scanner
         self.builder = builder
@@ -78,14 +81,25 @@ class Orchestrator:
         self.package_manager = package_manager
         self.publisher = publisher
         self.push = push
+        self.artifacts = artifacts or NullArtifacts()
 
     def run(self, image: str) -> RunOutcome:
+        """Run the remediation loop and persist the run's artifacts."""
+        outcome = self._run_loop(image)
+        path = self.artifacts.finalize(outcome)
+        if path:
+            outcome.artifacts_dir = path
+            logger.info("Run artifacts written to %s", path)
+        return outcome
+
+    def _run_loop(self, image: str) -> RunOutcome:
         logger.info("Pulling %s", image)
         self.builder.pull(image)
         original_digest = self.builder.digest(image)
 
         logger.info("Scanning %s", image)
         result = self.scanner.scan(image)
+        self.artifacts.record_scan("initial", result)
         outcome = evaluate_gate(result, self.gate_severity)
         if outcome.passed:
             logger.info("%s already passes the %s gate", image, self.gate_severity)
@@ -123,6 +137,7 @@ class Orchestrator:
             original_user = self.builder.inspect_user(image)
             dockerfile = generate_dockerfile(plan, original_user=original_user)
             dockerfiles.append(dockerfile)
+            self.artifacts.record_dockerfile(iteration, dockerfile)
 
             logger.info(
                 "Iteration %d: rebuilding %s to fix %d CVE(s)",
@@ -131,6 +146,7 @@ class Orchestrator:
             self.builder.build(dockerfile, image)
 
             result = self.scanner.scan(image)
+            self.artifacts.record_scan(str(iteration), result)
             outcome = evaluate_gate(result, self.gate_severity)
             if outcome.passed:
                 logger.info("Gate cleared after %d iteration(s)", iteration)
