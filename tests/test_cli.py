@@ -27,8 +27,10 @@ def test_fix_loop_requires_image():
     assert main(["fix"]) == 3
 
 
-def test_fix_push_not_yet_implemented():
-    # --push (publishing) lands in M4.
+def test_fix_push_without_credentials_is_config_error(monkeypatch):
+    monkeypatch.delenv("DOCKERHUB_USER", raising=False)
+    monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
+    # --push with no Docker Hub credentials fails fast as a config error.
     assert main(["fix", "img:tag", "--push"]) == 3
 
 

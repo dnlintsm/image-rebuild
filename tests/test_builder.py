@@ -44,3 +44,9 @@ def test_inspect_user_returns_value_or_none():
     assert DockerBuilder(runner=FakeRunner(RunResult(0, "appuser\n", ""))).inspect_user("i") == "appuser"
     assert DockerBuilder(runner=FakeRunner(RunResult(0, "\n", ""))).inspect_user("i") is None
     assert DockerBuilder(runner=FakeRunner(RunResult(1, "", "err"))).inspect_user("i") is None
+
+
+def test_digest_returns_value_or_none():
+    ok = FakeRunner(RunResult(0, "repo@sha256:abc\n", ""))
+    assert DockerBuilder(runner=ok).digest("i") == "repo@sha256:abc"
+    assert DockerBuilder(runner=FakeRunner(RunResult(1, "", "err"))).digest("i") is None

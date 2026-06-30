@@ -11,8 +11,8 @@ architecture and decisions.
 
 ## Status
 
-Milestones **M1 — scan + parse**, **M2 — plan + generate (dry-run)**, and
-**M3 — build + verify loop** (current):
+Milestones **M1 — scan + parse**, **M2 — plan + generate (dry-run)**,
+**M3 — build + verify loop**, and **M4 — publish + config** (current):
 
 - Invoke `twistcli` and normalize its JSON report (or parse one offline with `--report`).
 - Print a severity-gated vulnerability summary, flagging unfixable CRITICALs.
@@ -24,9 +24,14 @@ Milestones **M1 — scan + parse**, **M2 — plan + generate (dry-run)**, and
 - **Run the loop** (`fix <image>`): pull → scan → fix → rebuild → re-scan,
   iterating until the zero-critical gate passes, the count stalls, or only
   unfixable/manual CVEs remain.
+- **Publish** (`fix <image> --push`): only after a clean verify, push the
+  rebuilt image, **overwriting the original tag**, recording the pre-fix digest
+  for rollback.
+- **Config file** (`image-rebuild.yaml` / `--config`): gate severity, max
+  iterations, package-manager override, etc. CLI flags override it; secrets stay
+  in the environment. See [`image-rebuild.example.yaml`](image-rebuild.example.yaml).
 
-Publishing (overwrite the original tag on a clean verify) lands in M4; hardening
-in M5 (see `DESIGN.md`).
+Hardening (artifacts dir, richer logging) remains for M5 (see `DESIGN.md`).
 
 ## Install
 
@@ -53,6 +58,9 @@ image-rebuild fix --report report.json --dry-run -o Dockerfile
 
 # Run the build + verify loop against a live image (needs docker + twistcli)
 image-rebuild fix example/app:1.0 --max-iterations 3
+
+# ...and push the cleared image back, overwriting the original tag
+image-rebuild fix example/app:1.0 --push --config image-rebuild.yaml
 ```
 
 ### Credentials (environment only — never committed)
@@ -61,6 +69,10 @@ image-rebuild fix example/app:1.0 --max-iterations 3
 export PRISMA_CONSOLE_URL="https://<console-host>:<port>"
 export PRISMA_USER="..."
 export PRISMA_PASSWORD="..."
+
+# Only needed for --push:
+export DOCKERHUB_USER="..."
+export DOCKERHUB_TOKEN="..."
 ```
 
 ## Develop

@@ -47,6 +47,22 @@ class FakeBuilder:
     def inspect_user(self, image):
         return None
 
+    def digest(self, image):
+        return "sha256:original"
+
+
+class FakePublisher:
+    def __init__(self):
+        self.logged_in = False
+        self.pushed = []
+
+    def login(self):
+        self.logged_in = True
+
+    def push(self, image):
+        self.pushed.append(image)
+        return "sha256:rebuilt"
+
 
 def test_already_clean_does_not_build():
     scanner = FakeScanner([_result([])])
@@ -96,6 +112,35 @@ def test_no_progress_stalls():
     assert outcome.status == STALLED
     assert outcome.iterations == 1  # bails as soon as count doesn't drop
     assert not outcome.passed
+
+
+def test_push_on_clean_overwrites_tag_and_records_digests():
+    scanner = FakeScanner([_result([_crit("CVE-1")]), _result([])])
+    builder = FakeBuilder()
+    publisher = FakePublisher()
+    outcome = Orchestrator(scanner, builder, publisher=publisher, push=True).run("img:tag")
+    assert outcome.status == CLEAN
+    assert publisher.logged_in
+    assert publisher.pushed == ["img:tag"]          # original tag overwritten
+    assert outcome.pushed is True
+    assert outcome.pushed_digest == "sha256:rebuilt"
+    assert outcome.original_digest == "sha256:original"  # recorded for rollback
+
+
+def test_no_push_when_not_requested():
+    scanner = FakeScanner([_result([_crit("CVE-1")]), _result([])])
+    publisher = FakePublisher()
+    # push defaults to False
+    Orchestrator(scanner, FakeBuilder(), publisher=publisher).run("img:tag")
+    assert publisher.pushed == []
+
+
+def test_already_clean_is_not_pushed():
+    scanner = FakeScanner([_result([])])
+    publisher = FakePublisher()
+    outcome = Orchestrator(scanner, FakeBuilder(), publisher=publisher, push=True).run("img:tag")
+    assert outcome.status == ALREADY_CLEAN
+    assert publisher.pushed == []
 
 
 def test_multi_pass_progress_then_clean():

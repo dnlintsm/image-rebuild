@@ -11,12 +11,13 @@ import logging
 import sys
 
 from .builder import BuildError, DockerBuilder
-from .config import ConfigError, PrismaConfig
+from .config import AppConfig, ConfigError, PrismaConfig
 from .generator import generate_dockerfile
 from .models import RemediationPlan, ScanResult, severity_rank
 from .orchestrator import Orchestrator, RunOutcome
 from .parser import parse_report_file
 from .planner import build_plan
+from .publisher import DockerHubConfig, DockerPublisher, PublishError
 from .scanner import PrismaScanner, ScannerError
 
 # Exit codes (see DESIGN.md §7).
@@ -145,7 +146,29 @@ def _print_outcome(outcome: RunOutcome) -> None:
             print(f"  - {v.cve}  {v.package} {v.installed} -> {v.fixed}  [{v.ecosystem}]")
 
 
+def _resolve_fix_config(args: argparse.Namespace) -> str | None:
+    """Merge config-file defaults under explicit CLI flags. Returns an error string."""
+    try:
+        cfg = AppConfig.load(args.config)
+    except ConfigError as exc:
+        return str(exc)
+    if args.gate_severity is None:
+        args.gate_severity = cfg.gate_severity
+    if args.package_manager is None:
+        args.package_manager = cfg.package_manager
+    if args.max_iterations is None:
+        args.max_iterations = cfg.max_iterations
+    if severity_rank(args.gate_severity) == 0 and args.gate_severity.lower() != "unknown":
+        return f"unknown gate severity: {args.gate_severity}"
+    return None
+
+
 def _cmd_fix(args: argparse.Namespace) -> int:
+    err = _resolve_fix_config(args)
+    if err:
+        print(f"config error: {err}", file=sys.stderr)
+        return EXIT_CONFIG
+
     if not args.dry_run:
         return _run_fix_loop(args)
 
@@ -202,12 +225,15 @@ def _run_fix_loop(args: argparse.Namespace) -> int:
         print("error: provide an IMAGE to fix (or use --dry-run --report FILE).",
               file=sys.stderr)
         return EXIT_CONFIG
-    if args.push:
-        print("error: --push (publishing) lands in M4 and is not implemented yet.",
-              file=sys.stderr)
-        return EXIT_CONFIG
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    try:
+        publisher = DockerPublisher(DockerHubConfig.from_env()) if args.push else None
+    except PublishError as exc:
+        # Missing/invalid credentials is a configuration problem.
+        print(f"config error: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
+
     try:
         orchestrator = Orchestrator(
             scanner=PrismaScanner(PrismaConfig.from_env()),
@@ -215,16 +241,19 @@ def _run_fix_loop(args: argparse.Namespace) -> int:
             gate_severity=args.gate_severity,
             max_iterations=args.max_iterations,
             package_manager=args.package_manager,
+            publisher=publisher,
+            push=args.push,
         )
         outcome = orchestrator.run(args.image)
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return EXIT_CONFIG
-    except ScannerError as exc:
-        print(f"scanner error: {exc}", file=sys.stderr)
+    except (ScannerError, BuildError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return EXIT_SCANNER
-    except BuildError as exc:
-        print(f"build error: {exc}", file=sys.stderr)
+    except PublishError as exc:
+        # Image is verified clean but publishing failed — surface clearly.
+        print(f"publish error: {exc}", file=sys.stderr)
         return EXIT_SCANNER
 
     _print_outcome(outcome)
@@ -255,15 +284,16 @@ def build_parser() -> argparse.ArgumentParser:
     fix.add_argument("--dry-run", action="store_true",
                      help="Generate the remediation Dockerfile without building or pushing.")
     fix.add_argument("--output", "-o", help="Write the generated Dockerfile to this path (dry-run).")
-    fix.add_argument("--gate-severity", default="critical",
-                     help="Severity gate to remediate (default: critical).")
-    fix.add_argument("--package-manager", choices=["apt", "apk", "dnf"],
+    fix.add_argument("--gate-severity", default=None,
+                     help="Severity gate to remediate (default: critical / config).")
+    fix.add_argument("--package-manager", choices=["apt", "apk", "dnf"], default=None,
                      help="Override OS package-manager detection.")
     fix.add_argument("--base-image", help="Override the FROM target (e.g. pin to a digest).")
-    fix.add_argument("--max-iterations", type=int, default=3,
-                     help="Max rebuild/re-scan iterations in the build loop (default: 3).")
+    fix.add_argument("--max-iterations", type=int, default=None,
+                     help="Max rebuild/re-scan iterations in the build loop (default: 3 / config).")
+    fix.add_argument("--config", help="Path to an image-rebuild.yaml config file.")
     fix.add_argument("--push", action="store_true",
-                     help="Push the cleared image to the registry (M4; not yet implemented).")
+                     help="Push the cleared image to Docker Hub (overwrites the original tag).")
     fix.set_defaults(func=_cmd_fix)
     return parser
 
@@ -271,9 +301,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    # Validate gate severity early.
-    if severity_rank(args.gate_severity) == 0 and args.gate_severity.lower() != "unknown":
-        parser.error(f"unknown --gate-severity: {args.gate_severity}")
+    # Validate gate severity early. `fix` may leave it None here (resolved
+    # against the config file in _resolve_fix_config), so only check concrete values.
+    gate = getattr(args, "gate_severity", None)
+    if gate is not None and severity_rank(gate) == 0 and gate.lower() != "unknown":
+        parser.error(f"unknown --gate-severity: {gate}")
     return args.func(args)
 
 
