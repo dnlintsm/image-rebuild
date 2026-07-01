@@ -38,11 +38,20 @@ Feature-complete (M1–M5). Milestones **M1 — scan + parse**,
 
 ## Install
 
+This project uses [uv](https://docs.astral.sh/uv/) for Python environment and
+dependency management.
+
 ```bash
-pip install -e .          # or: pip install -e ".[dev]" for tests
+uv sync                    # create .venv and install the project
+uv sync --extra dev        # ...including the test tooling
 ```
 
-Requires Python 3.10+ and, for live scans, `twistcli` on your `PATH`.
+Then run commands through uv (`uv run image-rebuild ...`) or activate the
+environment with `source .venv/bin/activate`.
+
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/),
+Python 3.10+ (uv can install it: `uv python install 3.12`), and — for live
+scans — `twistcli` on your `PATH`.
 
 ## Usage
 
@@ -81,6 +90,10 @@ export DOCKERHUB_TOKEN="..."
 ## Develop
 
 ```bash
-pip install -e ".[dev]"
-pytest
+uv sync --extra dev
+uv run pytest
 ```
+
+The `uv.lock` file pins the exact dependency versions; CI installs with
+`uv sync --locked` so runs are reproducible. After changing dependencies in
+`pyproject.toml`, refresh it with `uv lock`.
