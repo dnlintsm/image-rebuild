@@ -1,7 +1,13 @@
 import pytest
 
 from image_rebuild.builder import RunResult
-from image_rebuild.publisher import DockerHubConfig, DockerPublisher, PublishError
+from image_rebuild.publisher import (
+    DockerHubConfig,
+    DockerPublisher,
+    PublishError,
+    RegistryConfig,
+    registry_host,
+)
 
 
 class FakeRunner:
@@ -18,11 +24,38 @@ class FakeRunner:
 CFG = DockerHubConfig(user="alice", token="s3cret")
 
 
-def test_dockerhub_config_from_env_missing(monkeypatch):
-    monkeypatch.delenv("DOCKERHUB_USER", raising=False)
-    monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
+def test_registry_config_from_env_missing(monkeypatch):
+    for name in ("DOCKERHUB_USER", "DOCKERHUB_TOKEN", "REGISTRY_USER", "REGISTRY_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
     with pytest.raises(PublishError, match="DOCKERHUB_USER"):
-        DockerHubConfig.from_env()
+        RegistryConfig.from_env()
+
+
+def test_registry_env_vars_take_precedence(monkeypatch):
+    monkeypatch.setenv("DOCKERHUB_USER", "hub-user")
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "hub-token")
+    monkeypatch.setenv("REGISTRY_USER", "harbor-user")
+    monkeypatch.setenv("REGISTRY_TOKEN", "harbor-token")
+    cfg = RegistryConfig.from_env()
+    assert cfg.user == "harbor-user"
+    assert cfg.token == "harbor-token"
+
+
+def test_dockerhub_config_alias_still_works(monkeypatch):
+    for name in ("REGISTRY_USER", "REGISTRY_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DOCKERHUB_USER", "alice")
+    monkeypatch.setenv("DOCKERHUB_TOKEN", "s3cret")
+    assert DockerHubConfig.from_env() == RegistryConfig(user="alice", token="s3cret")
+
+
+def test_registry_host_detection():
+    assert registry_host("penpotapp/mcp:latest") is None          # Docker Hub
+    assert registry_host("nginx") is None
+    assert registry_host("docker.io/library/nginx") is None       # explicit Hub
+    assert registry_host("harbor.corp.com/proj/app:1.0") == "harbor.corp.com"
+    assert registry_host("localhost:5000/app") == "localhost:5000"
+    assert registry_host("ghcr.io/owner/app:tag") == "ghcr.io"
 
 
 def test_login_passes_token_via_stdin():
@@ -33,6 +66,14 @@ def test_login_passes_token_via_stdin():
     assert "--password-stdin" in cmd
     assert stdin == "s3cret"          # token never on the command line
     assert "s3cret" not in cmd
+
+
+def test_login_with_registry_appends_host():
+    runner = FakeRunner({"login": RunResult(0, "Login Succeeded", "")})
+    DockerPublisher(CFG, runner=runner, registry="harbor.corp.com").login()
+    cmd, stdin = runner.calls[0]
+    assert cmd[-1] == "harbor.corp.com"
+    assert stdin == "s3cret"
 
 
 def test_login_failure_raises():

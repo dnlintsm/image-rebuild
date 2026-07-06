@@ -48,6 +48,7 @@ class SubprocessRunner:
 class ImageBuilder(Protocol):
     def pull(self, image: str) -> None: ...
     def build(self, dockerfile_text: str, tag: str) -> str: ...
+    def tag(self, source: str, target: str) -> None: ...
     def inspect_user(self, image: str) -> str | None: ...
     def digest(self, image: str) -> str | None: ...
 
@@ -76,6 +77,14 @@ class DockerBuilder:
         if result.returncode != 0:
             raise BuildError(f"docker build for {tag} failed: {result.stderr.strip()}")
         return tag
+
+    def tag(self, source: str, target: str) -> None:
+        """`docker tag source target` — used to retag before a target-repo push."""
+        result = self.runner.run([self.binary, "tag", source, target])
+        if result.returncode != 0:
+            raise BuildError(
+                f"docker tag {source} {target} failed: {result.stderr.strip()}"
+            )
 
     def inspect_user(self, image: str) -> str | None:
         """Return the image's configured USER, or None if root/unset."""

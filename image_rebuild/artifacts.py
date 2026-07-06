@@ -71,6 +71,7 @@ class RunArtifacts:
             "unsupported": [v.cve for v in outcome.unsupported],
             "original_digest": outcome.original_digest,
             "pushed": outcome.pushed,
+            "pushed_ref": outcome.pushed_ref,
             "pushed_digest": outcome.pushed_digest,
         }
         (self.dir / "run.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")

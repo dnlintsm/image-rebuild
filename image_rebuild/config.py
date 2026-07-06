@@ -26,7 +26,10 @@ class AppConfig:
     max_iterations: int = 3
     package_manager: str | None = None
     base_image_bump: bool = False
-    dockerhub_repo: str | None = None
+    scanner: str = "prisma"        # prisma | trivy
+    # Repo (or full ref) to push the fixed image to. None = overwrite the
+    # original tag — only possible when the source repo is yours.
+    target_repo: str | None = None
     artifacts_dir: str = "./runs"
 
     DEFAULT_PATH = "image-rebuild.yaml"
@@ -55,7 +58,9 @@ class AppConfig:
             max_iterations=int(data.get("max_iterations", 3)),
             package_manager=data.get("package_manager"),
             base_image_bump=bool(data.get("base_image_bump", False)),
-            dockerhub_repo=registry.get("dockerhub_repo"),
+            scanner=data.get("scanner", "prisma"),
+            # `dockerhub_repo` is the pre-M6 name for the same setting.
+            target_repo=registry.get("target_repo") or registry.get("dockerhub_repo"),
             artifacts_dir=data.get("artifacts_dir", "./runs"),
         )
 

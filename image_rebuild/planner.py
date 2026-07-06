@@ -28,8 +28,9 @@ from .models import (
 _OS_FAMILIES: list[tuple[tuple[str, ...], str]] = [
     (("debian", "ubuntu"), "apt"),
     (("alpine",), "apk"),
-    (("red hat", "rhel", "centos", "rocky", "almalinux", "alma", "fedora",
-      "amazon linux", "oracle"), "dnf"),
+    # "redhat"/"amazon" (no space) are Trivy's Metadata.OS.Family spellings.
+    (("red hat", "redhat", "rhel", "centos", "rocky", "almalinux", "alma",
+      "fedora", "amazon", "oracle"), "dnf"),
 ]
 
 # Language ecosystem -> package manager. Only ecosystems we can remediate from

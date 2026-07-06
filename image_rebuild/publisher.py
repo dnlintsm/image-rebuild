@@ -1,8 +1,10 @@
-"""Publish a cleared image to the registry (Docker Hub).
+"""Publish a cleared image to a registry (Docker Hub by default).
 
-Only ever invoked after a clean verify. Per the resolved design decisions the
-original tag is **overwritten** with the rebuilt image; the orchestrator records
-the pre-fix digest so the original can be restored if needed.
+Only ever invoked after a clean verify. By default the original tag is
+**overwritten** with the rebuilt image (resolved design decision 4); with a
+target repo configured, the orchestrator retags first and this module pushes
+the target reference instead — useful when the source repo isn't yours (e.g.
+fixing `penpotapp/mcp` and publishing to `youruser/penpot-mcp`).
 
 Like the builder, this shells out to the `docker` CLI through an injectable
 runner so the command construction is unit-testable without a daemon or a real
@@ -23,17 +25,44 @@ class PublishError(Exception):
     """Raised when login or push fails, or credentials are missing."""
 
 
+def registry_host(image_ref: str) -> str | None:
+    """Registry host of an image reference, or None for Docker Hub.
+
+    Docker's own rule: the first path component is a registry host only when
+    it contains a "." or ":" or is "localhost" (e.g. `harbor.corp.com/x/y`).
+    """
+    if "/" not in image_ref:
+        return None
+    first = image_ref.split("/", 1)[0]
+    if "." in first or ":" in first or first == "localhost":
+        return None if first in ("docker.io", "index.docker.io") else first
+    return None
+
+
 @dataclass
-class DockerHubConfig:
+class RegistryConfig:
     user: str
     token: str
 
     @classmethod
-    def from_env(cls) -> "DockerHubConfig":
-        missing = [n for n in ("DOCKERHUB_USER", "DOCKERHUB_TOKEN") if not os.environ.get(n)]
-        if missing:
-            raise PublishError("Missing Docker Hub credentials: " + ", ".join(missing))
-        return cls(user=os.environ["DOCKERHUB_USER"], token=os.environ["DOCKERHUB_TOKEN"])
+    def from_env(cls) -> "RegistryConfig":
+        """Read REGISTRY_USER/REGISTRY_TOKEN, falling back to DOCKERHUB_*."""
+        user = os.environ.get("REGISTRY_USER") or os.environ.get("DOCKERHUB_USER")
+        token = os.environ.get("REGISTRY_TOKEN") or os.environ.get("DOCKERHUB_TOKEN")
+        if not (user and token):
+            missing = [
+                n for n in ("DOCKERHUB_USER", "DOCKERHUB_TOKEN")
+                if not os.environ.get(n)
+            ]
+            raise PublishError(
+                "Missing registry credentials: " + ", ".join(missing)
+                + " (or REGISTRY_USER / REGISTRY_TOKEN)"
+            )
+        return cls(user=user, token=token)
+
+
+# Backwards-compatible alias (pre-M6 name).
+DockerHubConfig = RegistryConfig
 
 
 class ImagePublisher(Protocol):
@@ -46,19 +75,20 @@ _DIGEST_RE = re.compile(r"digest:\s*(sha256:[0-9a-f]+)", re.IGNORECASE)
 
 
 class DockerPublisher:
-    """Logs in to Docker Hub and pushes an image tag."""
+    """Logs in to a registry (Docker Hub when `registry` is None) and pushes a tag."""
 
-    def __init__(self, config: DockerHubConfig, runner: CommandRunner | None = None,
-                 binary: str = "docker"):
+    def __init__(self, config: RegistryConfig, runner: CommandRunner | None = None,
+                 binary: str = "docker", registry: str | None = None):
         self.config = config
         self.runner = runner or SubprocessRunner()
         self.binary = binary
+        self.registry = registry
 
     def login(self) -> None:
-        result = self.runner.run(
-            [self.binary, "login", "--username", self.config.user, "--password-stdin"],
-            input_text=self.config.token,
-        )
+        cmd = [self.binary, "login", "--username", self.config.user, "--password-stdin"]
+        if self.registry:
+            cmd.append(self.registry)
+        result = self.runner.run(cmd, input_text=self.config.token)
         if result.returncode != 0:
             raise PublishError(f"docker login failed: {result.stderr.strip()}")
 

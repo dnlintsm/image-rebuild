@@ -54,6 +54,7 @@ class RunOutcome:
     message: str = ""
     original_digest: str | None = None   # pre-fix image digest, for rollback
     pushed: bool = False
+    pushed_ref: str | None = None        # the reference actually pushed
     pushed_digest: str | None = None
     artifacts_dir: str | None = None
 
@@ -72,6 +73,7 @@ class Orchestrator:
         package_manager: str | None = None,
         publisher: ImagePublisher | None = None,
         push: bool = False,
+        target_image: str | None = None,
         artifacts: ArtifactSink | None = None,
     ):
         self.scanner = scanner
@@ -81,6 +83,7 @@ class Orchestrator:
         self.package_manager = package_manager
         self.publisher = publisher
         self.push = push
+        self.target_image = target_image
         self.artifacts = artifacts or NullArtifacts()
 
     def run(self, image: str) -> RunOutcome:
@@ -183,15 +186,23 @@ class Orchestrator:
         )
 
     def _publish(self, run: RunOutcome) -> None:
-        """Push the cleared image, overwriting the original tag (decision 4)."""
+        """Push the cleared image — to `target_image` when set, else overwriting
+        the original tag (decision 4)."""
         if not (self.push and self.publisher):
             return
-        logger.info("Publishing %s (overwriting original tag)", run.image)
+        dest = self.target_image or run.image
+        if dest != run.image:
+            logger.info("Tagging %s as %s", run.image, dest)
+            self.builder.tag(run.image, dest)
+            logger.info("Publishing %s", dest)
+        else:
+            logger.info("Publishing %s (overwriting original tag)", dest)
         self.publisher.login()
-        digest = self.publisher.push(run.image)
+        digest = self.publisher.push(dest)
         run.pushed = True
+        run.pushed_ref = dest
         run.pushed_digest = digest
-        run.message += f" Pushed {run.image}"
+        run.message += f" Pushed {dest}"
         run.message += f" (digest {digest})." if digest else "."
         if run.original_digest:
             run.message += f" Pre-fix digest was {run.original_digest}."

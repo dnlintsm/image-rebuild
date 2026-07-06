@@ -36,6 +36,7 @@ class FakeBuilder:
     def __init__(self):
         self.pulls = []
         self.builds = []
+        self.tags = []
 
     def pull(self, image):
         self.pulls.append(image)
@@ -43,6 +44,9 @@ class FakeBuilder:
     def build(self, dockerfile_text, tag):
         self.builds.append((tag, dockerfile_text))
         return tag
+
+    def tag(self, source, target):
+        self.tags.append((source, target))
 
     def inspect_user(self, image):
         return None
@@ -136,9 +140,26 @@ def test_push_on_clean_overwrites_tag_and_records_digests():
     assert outcome.status == CLEAN
     assert publisher.logged_in
     assert publisher.pushed == ["img:tag"]          # original tag overwritten
+    assert builder.tags == []                       # no retag without a target
     assert outcome.pushed is True
+    assert outcome.pushed_ref == "img:tag"
     assert outcome.pushed_digest == "sha256:rebuilt"
     assert outcome.original_digest == "sha256:original"  # recorded for rollback
+
+
+def test_push_to_target_repo_retags_first():
+    scanner = FakeScanner([_result([_crit("CVE-1")]), _result([])])
+    builder = FakeBuilder()
+    publisher = FakePublisher()
+    outcome = Orchestrator(
+        scanner, builder, publisher=publisher, push=True,
+        target_image="me/fixed:tag",
+    ).run("img:tag")
+    assert outcome.status == CLEAN
+    assert builder.tags == [("img:tag", "me/fixed:tag")]
+    assert publisher.pushed == ["me/fixed:tag"]     # original tag untouched
+    assert outcome.pushed_ref == "me/fixed:tag"
+    assert "me/fixed:tag" in outcome.message
 
 
 def test_no_push_when_not_requested():
