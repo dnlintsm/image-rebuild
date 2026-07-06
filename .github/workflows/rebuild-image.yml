@@ -1,0 +1,135 @@
+# Run the full pull -> scan -> fix -> verify -> push loop on a GitHub-hosted
+# runner, so vulnerable public images (e.g. penpotapp/mcp) can be remediated
+# in the cloud and published to a repo you own. Your internal registry (Harbor
+# proxy-cache, etc.) then pulls the fixed image from there.
+#
+# Scanner: Trivy by default — free, no console or license, works anywhere.
+# Prisma/twistcli is also supported, but only if your Console is reachable
+# from the public internet (set the PRISMA_* secrets and pick scanner=prisma).
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   DOCKERHUB_USER / DOCKERHUB_TOKEN     push (and rate-limit-free pulls)
+#   PRISMA_CONSOLE_URL / PRISMA_USER / PRISMA_PASSWORD   only for scanner=prisma
+
+name: Rebuild image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: "Source image to remediate (e.g. penpotapp/mcp:latest)"
+        required: true
+      target_repo:
+        description: "Repo to push the fixed image to (e.g. myuser/penpot-mcp). Empty = overwrite the source tag (needs push access to it)."
+        required: false
+        default: ""
+      scanner:
+        description: "Vulnerability scanner"
+        type: choice
+        options: [trivy, prisma]
+        default: trivy
+      gate_severity:
+        description: "Severity gate (push only when zero CVEs at/above this remain)"
+        type: choice
+        options: [critical, high, medium, low]
+        default: critical
+      push:
+        description: "Push the cleared image"
+        type: boolean
+        default: true
+  # For unattended re-checks (new CVEs surface over time), uncomment and set
+  # IMAGE/TARGET_REPO defaults below, or drive it from a matrix of images.
+  # schedule:
+  #   - cron: "0 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Install Trivy
+        if: inputs.scanner == 'trivy'
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin
+          trivy --version
+
+      - name: Install twistcli from the Prisma Console
+        if: inputs.scanner == 'prisma'
+        env:
+          PRISMA_CONSOLE_URL: ${{ secrets.PRISMA_CONSOLE_URL }}
+          PRISMA_USER: ${{ secrets.PRISMA_USER }}
+          PRISMA_PASSWORD: ${{ secrets.PRISMA_PASSWORD }}
+        run: |
+          curl -sSf -u "$PRISMA_USER:$PRISMA_PASSWORD" \
+            "$PRISMA_CONSOLE_URL/api/v1/util/twistcli" -o /usr/local/bin/twistcli
+          chmod +x /usr/local/bin/twistcli
+
+      - name: Log in to Docker Hub
+        # Authenticated pulls avoid the anonymous rate limit, which GitHub's
+        # shared runner IPs exhaust quickly.
+        env:
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$DOCKERHUB_USER" ]; then
+            echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USER" --password-stdin
+          fi
+
+      - name: Run image-rebuild
+        env:
+          # Inputs go through env vars, never interpolated into the script.
+          IMAGE: ${{ inputs.image }}
+          TARGET_REPO: ${{ inputs.target_repo }}
+          SCANNER: ${{ inputs.scanner }}
+          GATE_SEVERITY: ${{ inputs.gate_severity }}
+          DO_PUSH: ${{ inputs.push }}
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          PRISMA_CONSOLE_URL: ${{ secrets.PRISMA_CONSOLE_URL }}
+          PRISMA_USER: ${{ secrets.PRISMA_USER }}
+          PRISMA_PASSWORD: ${{ secrets.PRISMA_PASSWORD }}
+        run: |
+          args=(fix "$IMAGE" --scanner "$SCANNER" --gate-severity "$GATE_SEVERITY")
+          [ -n "$TARGET_REPO" ] && args+=(--target-repo "$TARGET_REPO")
+          [ "$DO_PUSH" = "true" ] && args+=(--push)
+          uv run image-rebuild "${args[@]}"
+
+      - name: Write job summary
+        if: always()
+        run: |
+          summary=$(ls -d runs/*/run.json 2>/dev/null | tail -1 || true)
+          if [ -n "$summary" ]; then
+            {
+              echo "## image-rebuild result"
+              jq -r '"- **Status:** \(.status)",
+                     "- **Image:** \(.image)",
+                     "- **Pushed:** \(.pushed)\(if .pushed_ref then " → `" + .pushed_ref + "`" else "" end)",
+                     "- **Iterations:** \(.iterations)",
+                     "- **Remaining criticals:** \(.final_critical_count)",
+                     "",
+                     .message' "$summary"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload run artifacts (scan reports, Dockerfiles)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-rebuild-run-${{ github.run_id }}
+          path: runs/
+          if-no-files-found: ignore
+          retention-days: 90

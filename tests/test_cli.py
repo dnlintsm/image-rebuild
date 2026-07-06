@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
 
-from image_rebuild.cli import main
+from image_rebuild.cli import main, resolve_target_ref
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "twistcli_sample.json")
+TRIVY_FIXTURE = str(Path(__file__).parent / "fixtures" / "trivy_sample.json")
 
 
 def test_version_flag(capsys):
@@ -36,10 +37,27 @@ def test_fix_loop_requires_image():
 
 
 def test_fix_push_without_credentials_is_config_error(monkeypatch):
-    monkeypatch.delenv("DOCKERHUB_USER", raising=False)
-    monkeypatch.delenv("DOCKERHUB_TOKEN", raising=False)
-    # --push with no Docker Hub credentials fails fast as a config error.
+    for name in ("DOCKERHUB_USER", "DOCKERHUB_TOKEN", "REGISTRY_USER", "REGISTRY_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    # --push with no registry credentials fails fast as a config error.
     assert main(["fix", "img:tag", "--push"]) == 3
+
+
+def test_scan_trivy_report_autodetected(capsys):
+    rc = main(["scan", "--report", TRIVY_FIXTURE])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "critical=3" in out
+    assert "CVE-2024-0001" in out
+
+
+def test_resolve_target_ref():
+    assert resolve_target_ref("penpotapp/mcp:1.2", None) is None
+    assert resolve_target_ref("penpotapp/mcp:1.2", "me/mcp") == "me/mcp:1.2"
+    assert resolve_target_ref("penpotapp/mcp", "me/mcp") == "me/mcp:latest"
+    assert resolve_target_ref("penpotapp/mcp:1.2", "me/mcp:v9") == "me/mcp:v9"
+    assert (resolve_target_ref("nginx:1.25", "harbor.corp.com/patched/nginx")
+            == "harbor.corp.com/patched/nginx:1.25")
 
 
 def test_fix_dry_run_generates_dockerfile(tmp_path, capsys):

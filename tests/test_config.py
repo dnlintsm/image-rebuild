@@ -9,6 +9,8 @@ def test_defaults_when_no_file():
     assert cfg.max_iterations == 3
     assert cfg.package_manager is None
     assert cfg.base_image_bump is False
+    assert cfg.scanner == "prisma"
+    assert cfg.target_repo is None
 
 
 def test_load_from_yaml(tmp_path):
@@ -18,8 +20,9 @@ def test_load_from_yaml(tmp_path):
         "max_iterations: 5\n"
         "package_manager: apk\n"
         "base_image_bump: true\n"
+        "scanner: trivy\n"
         "registry:\n"
-        "  dockerhub_repo: mycorp/app\n"
+        "  target_repo: mycorp/app\n"
         "artifacts_dir: ./out\n"
     )
     cfg = AppConfig.load(str(f))
@@ -27,8 +30,15 @@ def test_load_from_yaml(tmp_path):
     assert cfg.max_iterations == 5
     assert cfg.package_manager == "apk"
     assert cfg.base_image_bump is True
-    assert cfg.dockerhub_repo == "mycorp/app"
+    assert cfg.scanner == "trivy"
+    assert cfg.target_repo == "mycorp/app"
     assert cfg.artifacts_dir == "./out"
+
+
+def test_legacy_dockerhub_repo_key_still_read(tmp_path):
+    f = tmp_path / "image-rebuild.yaml"
+    f.write_text("registry:\n  dockerhub_repo: mycorp/app\n")
+    assert AppConfig.load(str(f)).target_repo == "mycorp/app"
 
 
 def test_missing_explicit_path_errors():

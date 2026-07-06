@@ -19,8 +19,8 @@ from .models import RemediationPlan, ScanResult, severity_rank
 from .orchestrator import Orchestrator, RunOutcome
 from .parser import parse_report_file
 from .planner import build_plan
-from .publisher import DockerHubConfig, DockerPublisher, PublishError
-from .scanner import PrismaScanner, ScannerError
+from .publisher import DockerPublisher, PublishError, RegistryConfig, registry_host
+from .scanner import PrismaScanner, ScannerError, TrivyScanner
 
 # Exit codes (see DESIGN.md §7).
 EXIT_OK = 0
@@ -81,13 +81,37 @@ def _print_summary(result: ScanResult, gate: str) -> None:
             print(f"  - {v.cve}  {v.package} {v.installed}")
 
 
+def _make_scanner(name: str):
+    """Instantiate the configured scanner backend."""
+    if name == "trivy":
+        return TrivyScanner()
+    if name == "prisma":
+        return PrismaScanner(PrismaConfig.from_env())
+    raise ConfigError(f"unknown scanner: {name} (expected prisma or trivy)")
+
+
+def resolve_target_ref(image: str, target_repo: str | None) -> str | None:
+    """Full reference to push to, or None to overwrite the original tag.
+
+    A target with an explicit tag is used as-is; a bare repo inherits the
+    source image's tag (`penpotapp/mcp:1.2` + `me/mcp` -> `me/mcp:1.2`).
+    """
+    if not target_repo:
+        return None
+    if ":" in target_repo.rsplit("/", 1)[-1]:
+        return target_repo
+    name = image.rsplit("/", 1)[-1]
+    tag = name.rsplit(":", 1)[1] if ":" in name and "@" not in name else "latest"
+    return f"{target_repo}:{tag}"
+
+
 def _load_result(args: argparse.Namespace) -> ScanResult:
-    """Obtain a ScanResult from --report (offline) or a live Prisma scan."""
+    """Obtain a ScanResult from --report (offline) or a live scan."""
     if args.report:
         return parse_report_file(args.report, image_fallback=args.image)
     if not args.image:
         raise ConfigError("provide an IMAGE to scan, or --report FILE")
-    scanner = PrismaScanner(PrismaConfig.from_env())
+    scanner = _make_scanner(getattr(args, "scanner", None) or "prisma")
     return scanner.scan(args.image, save_report_to=getattr(args, "save_report", None))
 
 
@@ -135,6 +159,8 @@ def _print_plan(plan: RemediationPlan) -> None:
 def _print_outcome(outcome: RunOutcome) -> None:
     print(f"\nResult: {outcome.status.upper()} — {outcome.message}")
     print(f"Image:  {outcome.image}")
+    if outcome.pushed_ref and outcome.pushed_ref != outcome.image:
+        print(f"Pushed: {outcome.pushed_ref}")
     print(f"Iterations: {outcome.iterations}")
     print(f"Remaining {outcome.final_result.critical_count} critical "
           f"(total {len(outcome.final_result.vulnerabilities)})")
@@ -164,6 +190,10 @@ def _resolve_fix_config(args: argparse.Namespace) -> str | None:
         args.max_iterations = cfg.max_iterations
     if args.artifacts_dir is None:
         args.artifacts_dir = cfg.artifacts_dir
+    if args.scanner is None:
+        args.scanner = cfg.scanner
+    if args.target_repo is None:
+        args.target_repo = cfg.target_repo
     if severity_rank(args.gate_severity) == 0 and args.gate_severity.lower() != "unknown":
         return f"unknown gate severity: {args.gate_severity}"
     return None
@@ -236,8 +266,15 @@ def _run_fix_loop(args: argparse.Namespace) -> int:
         level=logging.WARNING if args.quiet else logging.INFO,
         format="%(levelname)s %(message)s",
     )
+    target_ref = resolve_target_ref(args.image, args.target_repo)
     try:
-        publisher = DockerPublisher(DockerHubConfig.from_env()) if args.push else None
+        publisher = (
+            DockerPublisher(
+                RegistryConfig.from_env(),
+                registry=registry_host(target_ref or args.image),
+            )
+            if args.push else None
+        )
     except PublishError as exc:
         # Missing/invalid credentials is a configuration problem.
         print(f"config error: {exc}", file=sys.stderr)
@@ -247,13 +284,14 @@ def _run_fix_loop(args: argparse.Namespace) -> int:
 
     try:
         orchestrator = Orchestrator(
-            scanner=PrismaScanner(PrismaConfig.from_env()),
+            scanner=_make_scanner(args.scanner),
             builder=DockerBuilder(),
             gate_severity=args.gate_severity,
             max_iterations=args.max_iterations,
             package_manager=args.package_manager,
             publisher=publisher,
             push=args.push,
+            target_image=target_ref,
             artifacts=artifacts,
         )
         outcome = orchestrator.run(args.image)
@@ -282,8 +320,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan = sub.add_parser("scan", help="Scan an image (or parse an existing report) and print findings.")
     scan.add_argument("image", nargs="?", help="Image reference, e.g. nginx:1.25")
-    scan.add_argument("--report", help="Parse an existing twistcli JSON report instead of scanning.")
-    scan.add_argument("--save-report", help="Path to also save the raw twistcli JSON report.")
+    scan.add_argument("--report", help="Parse an existing scanner JSON report (twistcli or Trivy) instead of scanning.")
+    scan.add_argument("--save-report", help="Path to also save the raw scanner JSON report.")
+    scan.add_argument("--scanner", choices=["prisma", "trivy"], default="prisma",
+                      help="Scanner backend for live scans (default: prisma).")
     scan.add_argument("--gate-severity", default="critical",
                       help="Severity gate to highlight/fail on (default: critical).")
     scan.add_argument("--fail-on-gate", action="store_true",
@@ -292,8 +332,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     fix = sub.add_parser("fix", help="Plan and (with --dry-run) generate a remediation Dockerfile.")
     fix.add_argument("image", nargs="?", help="Image reference, e.g. nginx:1.25")
-    fix.add_argument("--report", help="Parse an existing twistcli JSON report instead of scanning.")
-    fix.add_argument("--save-report", help="Path to also save the raw twistcli JSON report.")
+    fix.add_argument("--report", help="Parse an existing scanner JSON report (twistcli or Trivy) instead of scanning.")
+    fix.add_argument("--save-report", help="Path to also save the raw scanner JSON report.")
+    fix.add_argument("--scanner", choices=["prisma", "trivy"], default=None,
+                     help="Scanner backend (default: prisma / config).")
     fix.add_argument("--dry-run", action="store_true",
                      help="Generate the remediation Dockerfile without building or pushing.")
     fix.add_argument("--output", "-o", help="Write the generated Dockerfile to this path (dry-run).")
@@ -311,8 +353,14 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Do not write any run artifacts to disk.")
     fix.add_argument("--quiet", "-q", action="store_true",
                      help="Only log warnings and errors.")
+    fix.add_argument("--target-repo", default=None,
+                     help="Repo (or full ref) to push the fixed image to, e.g. "
+                          "myuser/penpot-mcp or harbor.corp.com/patched/mcp:1.2. "
+                          "A bare repo inherits the source tag. Default: overwrite "
+                          "the original tag (requires push access to the source repo).")
     fix.add_argument("--push", action="store_true",
-                     help="Push the cleared image to Docker Hub (overwrites the original tag).")
+                     help="Push the cleared image (to --target-repo when set, else "
+                          "overwriting the original tag).")
     fix.set_defaults(func=_cmd_fix)
     return parser
 

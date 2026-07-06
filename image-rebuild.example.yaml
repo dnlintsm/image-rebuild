@@ -2,15 +2,20 @@
 # pass with `--config`. CLI flags override these values.
 #
 # Secrets are NEVER read from here — set them in the environment:
-#   PRISMA_CONSOLE_URL, PRISMA_USER, PRISMA_PASSWORD   (scanning)
-#   DOCKERHUB_USER, DOCKERHUB_TOKEN                    (--push)
+#   PRISMA_CONSOLE_URL, PRISMA_USER, PRISMA_PASSWORD   (scanner: prisma)
+#   DOCKERHUB_USER, DOCKERHUB_TOKEN                    (--push; or REGISTRY_USER/
+#                                                       REGISTRY_TOKEN for other registries)
 
 gate_severity: critical      # severity gate to remediate/enforce
 max_iterations: 3            # max rebuild/re-scan iterations before giving up
 package_manager:             # force apt|apk|dnf instead of auto-detecting (optional)
 base_image_bump: false       # recommendation-only; never auto-applied
+scanner: prisma              # prisma (twistcli + Console) | trivy (free, no console)
 
 registry:
-  dockerhub_repo: mycorp/app # the original tag is overwritten on push
+  # Where to push the fixed image. A bare repo inherits the source tag; a full
+  # ref (repo:tag) is used as-is. Omit to overwrite the original tag — only
+  # possible when the source repo is yours.
+  target_repo: mycorp/app
 
 artifacts_dir: ./runs        # where scan reports / generated Dockerfiles are kept

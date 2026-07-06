@@ -17,6 +17,8 @@ CRITICAL vulnerabilities**. The tool refuses to push otherwise.
    to remediate through).
 3. **Base-image bump** — **recommendation-only**, never auto-applied.
 4. **Docker Hub tag** — **overwrite the original tag** with the rebuilt image.
+   *(Amended in M6: for third-party source images this is impossible — no push
+   access — so `--target-repo` retags and publishes to a repo you own instead.)*
 
 ---
 
@@ -81,7 +83,9 @@ image_rebuild/
 Use the **Docker SDK for Python** (`docker` package) for pull/build/tag/push;
 shell out to `twistcli` via `subprocess`. Keeping the scanner as a subprocess
 makes it trivial to swap Prisma for Trivy/Grype later behind the `scanner`
-interface.
+interface. *(Realized in M6: `TrivyScanner` is a drop-in backend selected with
+`--scanner trivy` — free and console-less, for runners outside the company
+network such as GitHub Actions; see `.github/workflows/rebuild-image.yml`.)*
 
 ---
 
